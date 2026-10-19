@@ -134,17 +134,18 @@ def child_env(base_env, token, gh_config_dir):
     return env
 
 
-def read_key(op_ref, run):
+def read_key(op_ref, run, account=None):
     if not op_ref.startswith("op://"):
         raise BrokerError("the key reference must be a 1Password op:// URI")
-    out = run(["op", "read", op_ref]).strip()
+    cmd = ["op", "read", "--account", account, op_ref] if account else ["op", "read", op_ref]
+    out = run(cmd).strip()
     if not out.startswith(b"-----BEGIN") or b"PRIVATE KEY-----" not in out:
         raise BrokerError("1Password value is not a PEM private key")
     return out
 
 
-def _mint(op_ref, run, http, now):
-    key = read_key(op_ref, run)
+def _mint(op_ref, run, http, now, account=None):
+    key = read_key(op_ref, run, account)
     try:
         jwt = build_jwt(key, APP_ID, now)
     finally:
@@ -163,8 +164,8 @@ def _revoke_if_token(grant, http):
     return False
 
 
-def run_session(argv, op_ref, *, run, http, spawn, now, base_env, gh_config_dir):
-    grant = _mint(op_ref, run, http, now)
+def run_session(argv, op_ref, *, run, http, spawn, now, base_env, gh_config_dir, account=None):
+    grant = _mint(op_ref, run, http, now, account)
     try:
         check_grant(grant)
         return spawn(argv, child_env(base_env, grant["token"], gh_config_dir))
@@ -172,8 +173,8 @@ def run_session(argv, op_ref, *, run, http, spawn, now, base_env, gh_config_dir)
         _revoke_if_token(grant, http)
 
 
-def check_only(op_ref, *, run, http, now):
-    grant = _mint(op_ref, run, http, now)
+def check_only(op_ref, *, run, http, now, account=None):
+    grant = _mint(op_ref, run, http, now, account)
     try:
         check_grant(grant)
         summary = {"expires_at": grant["expires_at"],
@@ -189,7 +190,11 @@ def check_only(op_ref, *, run, http, now):
 def _run_op(cmd):
     proc = subprocess.run(cmd, capture_output=True, check=False)
     if proc.returncode != 0:
-        raise BrokerError(f"`op read` failed (exit {proc.returncode}); is 1Password unlocked and the reference right?")
+        # op's own first error line (e.g. "account is not signed in") never contains the secret;
+        # stdout is never shown.
+        first = (proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()[:1]
+        reason = first[0][:200] if first else "no error text"
+        raise BrokerError(f"`op read` failed (exit {proc.returncode}): {reason}")
     return proc.stdout
 
 
@@ -220,18 +225,22 @@ def main(argv=None):
     own = argv[:argv.index("--")] if "--" in argv else argv
     parser = argparse.ArgumentParser(prog="broker.py", description=__doc__.split("\n\n")[0])
     parser.add_argument("--op-ref", default=DEFAULT_OP_REF, help="1Password op:// reference to the PEM")
+    parser.add_argument("--op-account", default=None,
+                        help="1Password account (sign-in address or ID) holding the key, when several are configured")
     parser.add_argument("--check", action="store_true", help="mint, verify and revoke; print a non-secret summary")
     args = parser.parse_args(own)
     if not args.check and not command:
         parser.error("give a command after `--`, e.g. `-- claude`, or use --check")
     try:
         if args.check:
-            summary = check_only(args.op_ref, run=_run_op, http=_http, now=int(time.time()))
+            summary = check_only(args.op_ref, run=_run_op, http=_http, now=int(time.time()),
+                                 account=args.op_account)
             print(json.dumps(summary, indent=2))
             return 0
         with tempfile.TemporaryDirectory(prefix="kemetra-agent-gh-") as gh_dir:
             return run_session(command, args.op_ref, run=_run_op, http=_http, spawn=_spawn,
-                               now=int(time.time()), base_env=dict(os.environ), gh_config_dir=gh_dir)
+                               now=int(time.time()), base_env=dict(os.environ), gh_config_dir=gh_dir,
+                               account=args.op_account)
     except BrokerError as exc:
         print(f"broker: {exc}", file=sys.stderr)
         return 2

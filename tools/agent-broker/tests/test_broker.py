@@ -249,6 +249,35 @@ class ReadKeyTests(unittest.TestCase):
         self.assertEqual(broker.read_key("op://tower/kemetra agent bot/private key", run), pem.strip())
         self.assertEqual(seen, [["op", "read", "op://tower/kemetra agent bot/private key"]])
 
+    def test_account_is_passed_to_op_when_given(self):
+        _, pem = _throwaway_key()
+        seen = []
+
+        def run(cmd):
+            seen.append(cmd)
+            return pem
+        broker.read_key("op://tower/kemetra agent bot/private key", run, account="kemetra-labs.1password.com")
+        self.assertEqual(seen, [["op", "read", "--account", "kemetra-labs.1password.com",
+                                 "op://tower/kemetra agent bot/private key"]])
+
+    def test_op_failure_shows_ops_error_line_but_never_stdout(self):
+        import subprocess
+        original = subprocess.run
+
+        def fake_run(cmd, **kw):
+            return subprocess.CompletedProcess(cmd, 1, stdout=b"-----BEGIN SECRET-----",
+                                               stderr=b"[ERROR] 2026/10/20 00:47:40 account is not signed in\nsecond line")
+        subprocess.run = fake_run
+        try:
+            with self.assertRaises(broker.BrokerError) as ctx:
+                broker._run_op(["op", "read", "op://v/i/f"])
+        finally:
+            subprocess.run = original
+        msg = str(ctx.exception)
+        self.assertIn("account is not signed in", msg)
+        self.assertNotIn("SECRET", msg)
+        self.assertNotIn("second line", msg)
+
     def test_non_pem_output_is_rejected_without_echo(self):
         with self.assertRaises(broker.BrokerError) as ctx:
             broker.read_key("op://v/i/f", lambda cmd: b"SECRETVALUE")

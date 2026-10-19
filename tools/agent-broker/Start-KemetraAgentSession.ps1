@@ -20,6 +20,8 @@
 [CmdletBinding()]
 param(
     [string]$OpRef = 'op://tower/kemetra agent bot/private key',
+    # 1Password account holding the vault, when more than one is configured (sign-in address or ID).
+    [string]$OpAccount = '',
     [switch]$Check,
     [string[]]$Command = @('claude')
 )
@@ -27,9 +29,11 @@ $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 Set-Location $repo
 $broker = Join-Path $PSScriptRoot 'broker.py'
+$accountArgs = @()
+if ($OpAccount) { $accountArgs = @('--op-account', $OpAccount) }
 if ($Check) {
-    & python $broker --op-ref $OpRef --check
+    & python $broker --op-ref $OpRef @accountArgs --check
 } else {
-    & python $broker --op-ref $OpRef -- @Command
+    & python $broker --op-ref $OpRef @accountArgs -- @Command
 }
 exit $LASTEXITCODE
