@@ -201,7 +201,8 @@ products:
         jobs: []
 
 shared_classes:   # precedence: lower wins; two matches at the SAME precedence = AMBIGUOUS_PATH
-  policy:  { precedence: 1, globs: [.github/**, tools/project-graph/**, tools/ci-gate/**, CODEOWNERS], selects: all, policy_change: true }
+  # tools/agent-broker/** runs on the owner's machine with 1Password access, so any change to it is a policy change.
+  policy:  { precedence: 1, globs: [.github/**, tools/project-graph/**, tools/ci-gate/**, tools/agent-broker/**, CODEOWNERS], selects: all, policy_change: true }
   tooling: { precedence: 2, globs: [tools/**], selects: all }
   e2e:     { precedence: 3, globs: [tests/e2e/**], selects: [e2e] }
   docs:    { precedence: 3, globs: [docs/**], selects: [] }

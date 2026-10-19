@@ -111,6 +111,7 @@ class ClassifyTests(unittest.TestCase):
     def test_shared_precedence(self):
         self.assertEqual(self.g.classify("CODEOWNERS").owner, "policy")
         self.assertEqual(self.g.classify("tools/project-graph/x").owner, "policy")
+        self.assertEqual(self.g.classify("tools/agent-broker/broker.py").owner, "policy")
         self.assertEqual(self.g.classify("tools/history/frozen.tsv").owner, "tooling")
         self.assertEqual(self.g.classify("LICENSE").owner, "root")
         self.assertEqual(self.g.classify("docs/a.md").owner, "docs")
