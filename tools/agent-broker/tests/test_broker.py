@@ -249,6 +249,28 @@ class ReadKeyTests(unittest.TestCase):
         self.assertEqual(broker.read_key("op://tower/kemetra agent bot/private key", run), pem.strip())
         self.assertEqual(seen, [["op", "read", "op://tower/kemetra agent bot/private key"]])
 
+    def test_reference_without_field_reads_a_document_item(self):
+        _, pem = _throwaway_key()
+        seen = []
+
+        def run(cmd):
+            seen.append(cmd)
+            return pem
+        self.assertEqual(broker.read_key("op://tower/kemetra agent bot", run), pem.strip())
+        broker.read_key("op://tower/kemetra agent bot", run, account="kemetra-labs.1password.com")
+        self.assertEqual(seen, [
+            ["op", "document", "get", "kemetra agent bot", "--vault", "tower"],
+            ["op", "document", "get", "kemetra agent bot", "--vault", "tower", "--account", "kemetra-labs.1password.com"],
+        ])
+
+    def test_malformed_references_are_rejected_before_running_op(self):
+        calls = []
+        for ref in ("op://tower", "op://tower/", "op:///item", "op://tower//field"):
+            with self.subTest(ref=ref):
+                with self.assertRaises(broker.BrokerError):
+                    broker.read_key(ref, lambda cmd: calls.append(cmd) or b"")
+        self.assertEqual(calls, [])
+
     def test_account_is_passed_to_op_when_given(self):
         _, pem = _throwaway_key()
         seen = []

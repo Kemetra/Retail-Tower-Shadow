@@ -134,11 +134,23 @@ def child_env(base_env, token, gh_config_dir):
     return env
 
 
-def read_key(op_ref, run, account=None):
+def _op_command(op_ref, account):
+    """op://vault/item -> Document item (`op document get`);
+    op://vault/item/[section/]field -> field (`op read`)."""
     if not op_ref.startswith("op://"):
         raise BrokerError("the key reference must be a 1Password op:// URI")
-    cmd = ["op", "read", "--account", account, op_ref] if account else ["op", "read", op_ref]
-    out = run(cmd).strip()
+    parts = op_ref[len("op://"):].split("/")
+    if len(parts) < 2 or any(not p for p in parts):
+        raise BrokerError("the key reference must be op://vault/item or op://vault/item/field")
+    acct = ["--account", account] if account else []
+    if len(parts) == 2:
+        vault, item = parts
+        return ["op", "document", "get", item, "--vault", vault, *acct]
+    return ["op", "read", *acct, op_ref]
+
+
+def read_key(op_ref, run, account=None):
+    out = run(_op_command(op_ref, account)).strip()
     if not out.startswith(b"-----BEGIN") or b"PRIVATE KEY-----" not in out:
         raise BrokerError("1Password value is not a PEM private key")
     return out
@@ -194,7 +206,7 @@ def _run_op(cmd):
         # stdout is never shown.
         first = (proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()[:1]
         reason = first[0][:200] if first else "no error text"
-        raise BrokerError(f"`op read` failed (exit {proc.returncode}): {reason}")
+        raise BrokerError(f"`op {cmd[1]}` failed (exit {proc.returncode}): {reason}")
     return proc.stdout
 
 
