@@ -136,11 +136,11 @@ class ChildEnvTests(unittest.TestCase):
         env = broker.child_env(dict(self.BASE), TOKEN, "/tmp/empty-gh")
         n = int(env["GIT_CONFIG_COUNT"])
         pairs = [(env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"]) for i in range(n)]
-        helpers = [v for k, v in pairs if k == "credential.helper"]
-        self.assertEqual(helpers[0], "")                      # resets Git Credential Manager etc.
-        self.assertEqual(len(helpers), 2)
-        self.assertIn("GH_TOKEN", helpers[1])
-        self.assertNotIn(TOKEN, helpers[1])                   # helper reads env, token not in config
+        self.assertEqual([v for k, v in pairs if k == "credential.helper"], [""])   # reset only, never unscoped
+        scoped = [v for k, v in pairs if k == "credential.https://github.com.helper"]
+        self.assertEqual(len(scoped), 1)
+        self.assertIn("GH_TOKEN", scoped[0])
+        self.assertNotIn(TOKEN, scoped[0])                    # helper reads env, token not in config
         for name in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
             self.assertEqual(env[name], "kemetra-agent[bot]")
         for name in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
@@ -165,6 +165,76 @@ class GitCredentialIntegrationTests(unittest.TestCase):
         fields = dict(line.split("=", 1) for line in out.stdout.splitlines() if "=" in line)
         self.assertEqual(fields.get("username"), "x-access-token")
         self.assertEqual(fields.get("password"), TOKEN)
+
+
+class ReviewFindingTests(unittest.TestCase):
+    """PR #3 review: helper scope, SSH bypass, revoke failures."""
+
+    def _git(self, env, *args, stdin=None):
+        import subprocess
+        return subprocess.run(["git", *args], input=stdin, capture_output=True, text=True, env=env, timeout=30)
+
+    def _env(self, tmp):
+        owner_cfg = os.path.join(tmp, "owner.gitconfig")
+        with open(owner_cfg, "w") as fh:
+            fh.write('[credential]\n\thelper = "!f() { echo username=owner; echo password=OWNER_SECRET; }; f"\n')
+        base = {**os.environ, "GIT_CONFIG_GLOBAL": owner_cfg, "GIT_CONFIG_NOSYSTEM": "1", "SSH_AUTH_SOCK": "/tmp/agent"}
+        return broker.child_env(base, TOKEN, tmp)
+
+    def test_token_is_only_offered_to_github_com(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._env(tmp)
+            other = self._git(env, "credential", "fill", stdin="protocol=https\nhost=evil.example.com\n\n")
+        self.assertNotIn(TOKEN, other.stdout)
+        self.assertNotIn("OWNER_SECRET", other.stdout)
+
+    def test_ssh_github_urls_are_rewritten_to_https_and_ssh_is_disabled(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._env(tmp)
+            for url in ("git@github.com:Kemetra/Retail-Tower-Shadow.git",
+                        "ssh://git@github.com/Kemetra/Retail-Tower-Shadow.git"):
+                out = self._git(env, "ls-remote", "--get-url", url)
+                self.assertEqual(out.stdout.strip(), "https://github.com/Kemetra/Retail-Tower-Shadow.git", url)
+        self.assertNotIn("SSH_AUTH_SOCK", env)
+        self.assertIn("exit 1", env["GIT_SSH_COMMAND"])
+
+    def test_failed_revoke_warns_instead_of_staying_silent(self):
+        import contextlib
+        import io
+        _, pem = _throwaway_key()
+        http = FakeHttp([(201, GOOD_GRANT), (500, None)])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = broker.run_session(["claude"], "op://tower/x/y", run=lambda c: pem, http=http,
+                                      spawn=lambda a, e: 0, now=NOW, base_env={}, gh_config_dir="/tmp/g")
+        self.assertEqual(code, 0)
+        self.assertIn("WARNING", err.getvalue())
+        self.assertIn("expires_at", err.getvalue())
+        self.assertNotIn(TOKEN, err.getvalue())
+
+    def test_check_mode_reports_failed_revoke(self):
+        import contextlib
+        import io
+        _, pem = _throwaway_key()
+        http = FakeHttp([(201, GOOD_GRANT), (0, None)])
+        with contextlib.redirect_stderr(io.StringIO()):
+            summary = broker.check_only("op://tower/x/y", run=lambda c: pem, http=http, now=NOW)
+        self.assertFalse(summary["revoked"])
+
+    def test_network_error_becomes_status_zero_not_traceback(self):
+        import urllib.error
+        import urllib.request
+        original = urllib.request.urlopen
+
+        def boom(*a, **k):
+            raise urllib.error.URLError("network down")
+        urllib.request.urlopen = boom
+        try:
+            self.assertEqual(broker._http("DELETE", "https://api.github.com/x", {}, None), (0, None))
+        finally:
+            urllib.request.urlopen = original
 
 
 class ReadKeyTests(unittest.TestCase):

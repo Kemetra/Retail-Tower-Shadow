@@ -43,7 +43,10 @@ PERMISSIONS = {
 BOT_NAME = "kemetra-agent[bot]"
 BOT_EMAIL = "344537132+kemetra-agent[bot]@users.noreply.github.com"
 OWNER_CREDENTIAL_VARS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
-                         "GIT_ASKPASS", "SSH_ASKPASS", "GH_CONFIG_DIR")
+                         "GIT_ASKPASS", "SSH_ASKPASS", "GH_CONFIG_DIR", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
+                         "GIT_SSH", "GIT_SSH_COMMAND")
+# SSH would use the owner's keys / agent, so it is disabled; GitHub SSH URLs are rewritten to HTTPS.
+NO_SSH = 'echo "broker: SSH is disabled in agent sessions; use HTTPS" >&2; exit 1'
 LEVEL = {"read": 1, "write": 2, "admin": 3}
 # Reads the token from the environment at call time, so it never lands in git config.
 CREDENTIAL_HELPER = '!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_TOKEN"; }; f'
@@ -109,10 +112,16 @@ def revoke(token, http):
 
 def child_env(base_env, token, gh_config_dir):
     env = {k: v for k, v in base_env.items() if k not in OWNER_CREDENTIAL_VARS}
-    pairs = [("credential.helper", ""), ("credential.helper", CREDENTIAL_HELPER)]
+    pairs = [
+        ("credential.helper", ""),                                   # drop GCM / gh / owner helpers
+        ("credential.https://github.com.helper", CREDENTIAL_HELPER),  # bot token for github.com only
+        ("url.https://github.com/.insteadOf", "git@github.com:"),
+        ("url.https://github.com/.insteadOf", "ssh://git@github.com/"),
+    ]
     env.update({
         "GH_TOKEN": token,
         "GH_CONFIG_DIR": gh_config_dir,
+        "GIT_SSH_COMMAND": NO_SSH,
         "GIT_TERMINAL_PROMPT": "0",
         "GCM_INTERACTIVE": "never",
         "GIT_AUTHOR_NAME": BOT_NAME, "GIT_COMMITTER_NAME": BOT_NAME,
@@ -145,7 +154,13 @@ def _mint(op_ref, run, http, now):
 
 def _revoke_if_token(grant, http):
     token = grant.get("token")
-    return revoke(token, http) if isinstance(token, str) and token else False
+    if not (isinstance(token, str) and token):
+        return False
+    if revoke(token, http):
+        return True
+    print(f"broker: WARNING token revocation failed; it stays valid until expires_at {grant.get('expires_at')}",
+          file=sys.stderr)
+    return False
 
 
 def run_session(argv, op_ref, *, run, http, spawn, now, base_env, gh_config_dir):
@@ -186,6 +201,8 @@ def _http(method, url, headers, body):
             status, raw = resp.status, resp.read()
     except urllib.error.HTTPError as err:
         status, raw = err.code, err.read()
+    except (urllib.error.URLError, OSError):
+        return 0, None          # network failure: callers treat any non-success status as failure
     try:
         return status, (json.loads(raw) if raw else None)
     except ValueError:
