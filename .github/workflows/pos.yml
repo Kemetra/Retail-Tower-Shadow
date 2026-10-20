@@ -91,6 +91,20 @@ jobs:
         with:
           persist-credentials: false
 
+      # src/renderer/__tests__/source-scope-guard.test.ts runs `git diff origin/main...HEAD`
+      # and falls back to `git fetch origin main`. The product repo is public, so that fetch
+      # works anonymously there; this repo is private and checkout does not persist
+      # credentials, so fetch the main tip here, right after checkout and before any PR
+      # code runs (npm ci included), with the read-only token passed to this one command
+      # only (never written to .git/config).
+      - name: Fetch main tip for the source-scope guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags --no-recurse-submodules --depth=1 origin main:refs/remotes/origin/main
+
       - name: Setup Node 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -130,6 +144,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Fetch main tip for the source-scope guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags --no-recurse-submodules --depth=1 origin main:refs/remotes/origin/main
+
       - name: Setup Node 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -166,6 +188,14 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+
+      - name: Fetch main tip for the source-scope guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags --no-recurse-submodules --depth=1 origin main:refs/remotes/origin/main
 
       - name: Setup Node 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
