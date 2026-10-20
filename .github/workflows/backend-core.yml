@@ -23,6 +23,8 @@
 #    collected and the Jest thresholds in apps/api/jest.config.cjs still gate the job.
 #  - run directory: `defaults.run.working-directory` does not apply to `uses:` steps, so the
 #    pnpm cache path carries the services/backend-core/ prefix explicitly.
+#  - environment, not parity: the api test step sets NODE_OPTIONS=--max-old-space-size=4096 and
+#    a read-only step before it reports the runner's size (see the comments on those steps).
 #  - hardening, not parity: actions are pinned to SHAs (the product used floating @v4),
 #    checkout does not persist credentials, and pull_request is limited to branches: [main]
 #    (required by the staged gate).
@@ -161,8 +163,23 @@ jobs:
           WORKER_INCLUDE_DB_TESTS: "1"
         run: pnpm --filter @data-pulse-2/worker test
 
+      # Read-only: prints the runner's size and Node's effective heap limit, so the heap setting
+      # on the api step below is backed by a measurement from this runner.
+      - name: Report runner size and Node heap limit
+        run: |
+          echo "nproc: $(nproc)"
+          free -m
+          node -p "'node ' + process.version + ', heap_size_limit MB: ' + Math.round(require('v8').getHeapStatistics().heap_size_limit / 1048576)"
+
       # Coverage is collected and the Jest thresholds in apps/api/jest.config.cjs gate this job.
       # --forceExit: the api suite has a pre-existing open-handle leak (the product workflow
       # documents it); without it Jest hangs after a green run until the job times out.
+      # NODE_OPTIONS (this step only): the first run on this private repo's standard runner died
+      # with "JavaScript heap out of memory" at a ~2 GB heap after 412 of 569 suites (run
+      # 39408180851). The product's public repo runs the same step on a larger hosted runner and
+      # passed 14 of 14 recent runs. Raising V8's heap limit is an environmental deviation, not a
+      # test change; that it matches the headroom of the public runner is reasoned, not proven.
       - name: Test @data-pulse-2/api (RLS + audit + auth suites)
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm --filter @data-pulse-2/api test -- --coverage --forceExit
