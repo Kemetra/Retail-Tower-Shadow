@@ -1,0 +1,65 @@
+# RT-749 (planned in RT-748): root CI job for the ERPNext Connector.
+# Reproduces ERPNext-Connector@274589a ci.yml job `test` ("Unit tests and lint") inside
+# integrations/erpnext-connector/. The job `name:` is the graph.yaml job key
+# (static rule 5), so it is a literal with no expression. The workflow `name:` must stay
+# `erpnext-connector` (matched by the staged gate). PR-reachable: read-only token, no
+# credentials, no environment. Deliberately no `paths:` filter and no job `if:`: the
+# project graph is the only selector, and a selected job that is skipped fails the gate.
+# The product's informational coverage upload is not carried over (it needs a repo
+# credential, which PR-reachable workflows must not use). coverage.xml is still produced.
+name: erpnext-connector
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per-workflow prefix so the product workflows never cancel each other on one ref; the
+  # push-SHA suffix stops consecutive pushes to main from cancelling each other.
+  group: erpnext-connector-${{ github.ref }}${{ github.event_name == 'push' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: true
+
+jobs:
+  connector-unit-tests-and-lint:
+    name: connector/unit-tests-and-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: integrations/erpnext-connector
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      # 3.11 matches the ERPNext/Frappe v15 bench runtime (rt9 image: Python 3.11.6).
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
+          # A fresh .venv on PATH for the later steps, so lint and tests see only the locked set.
+          python-version: "3.11"
+          activate-environment: true
+
+      # The CI tool set is locked, with sha256 hashes and wheels only, in pylock.toml.
+      # --require-hashes refuses any wheel without a matching hash; --no-build refuses sdists.
+      - name: Install test tools (hash-locked)
+        run: uv pip install --require-hashes --no-build -r pylock.toml
+
+      - name: Lint
+        run: python -m ruff check retail_tower_erpnext_connector
+
+      - name: Unit tests (frappe-free)
+        run: >-
+          python -m pytest -q retail_tower_erpnext_connector/tests
+          --ignore=retail_tower_erpnext_connector/tests/test_foundation.py
+          --cov=retail_tower_erpnext_connector --cov-report=xml:coverage.xml
