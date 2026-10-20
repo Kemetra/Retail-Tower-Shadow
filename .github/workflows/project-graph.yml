@@ -1,0 +1,49 @@
+# Root CI for the project graph (RT-748 slice I-2). Defines the graph.yaml job key
+# `boundary-check` (static rule 5) by running the layer-1 boundary check that
+# project-graph-selftest.yml already runs as one of its steps, as its own job.
+# The job `name:` is the graph key, so it is a literal with no expression. The workflow
+# `name:` must stay `project-graph` (matched by the staged gate). PR-reachable: read-only
+# token, no credentials, no environment. Deliberately no `paths:` filter and no job `if:`:
+# the graph always selects this job, and a selected job that is skipped fails the gate.
+# `dependency-review` shares this workflow file in graph.yaml but has no source job yet
+# (RT-748 NV-4), so it is intentionally NOT defined here: a stub would be a false pass.
+name: project-graph
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per-workflow prefix so the product workflows never cancel each other on one ref; the
+  # push-SHA suffix stops consecutive pushes to main from cancelling each other.
+  group: project-graph-${{ github.ref }}${{ github.event_name == 'push' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: true
+
+jobs:
+  boundary-check:
+    name: boundary-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # Hash-locked, wheels only, no transitive resolution (same as project-graph-selftest).
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: --no-deps -r tools/project-graph/requirements.txt
+
+      # Exits non-zero on any cross-product reference outside graph.yaml `edges`.
+      - name: Layer-1 boundary check
+        working-directory: tools/project-graph
+        run: python -m pgraph boundary --repo "$GITHUB_WORKSPACE" --rev HEAD
