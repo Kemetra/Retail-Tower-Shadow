@@ -1,0 +1,159 @@
+# Root CI for Backend-Core (RT-748 slice I-5). Defines the graph.yaml job keys bc/fast and
+# bc/db-integration (static rule 5) by reproducing the `fast` and `db-integration` jobs of
+# services/backend-core/.github/workflows/ci.yml at the imported tree (Backend-Core@8111982)
+# inside services/backend-core/. Job `name:` values are the graph keys, so each is a literal
+# with no expression and there is no matrix. The workflow `name:` must stay `backend-core`
+# (matched by the staged gate). PR-reachable: read-only token, no credentials, no
+# environment.
+#
+# NOT defined here, on purpose: bc/oasdiff and bc/schemathesis. Their scripts
+# (tools/oasdiff/check.sh, tools/schemathesis/*.sh) take the repository root from
+# `git rev-parse --show-toplevel`, which in this repository is the monorepo root, so
+# oasdiff would find no contracts, print "nothing to compare" and exit 0 (a false green).
+# They need an upstream script fix first (RT-748 NV-1, NV-2); they stay missing so rule 5
+# keeps failing closed.
+#
+# Differences from the product workflow, all forced by the project graph:
+#  - the graph is the only selector, so the `changes` job (risk-tier classifier), the `ci`
+#    aggregate and the `needs.changes.outputs.* != 'false'` gates are gone; no `paths:`
+#    filter. A selected job that is skipped fails the gate, so both jobs always run (the
+#    product's own fail-open default for non-PR events, applied to every event).
+#  - the informational Codecov upload and its lcov check are not carried over (the upload
+#    needs a repo credential, which PR-reachable workflows must not use). Coverage is still
+#    collected and the Jest thresholds in apps/api/jest.config.cjs still gate the job.
+#  - run directory: `defaults.run.working-directory` does not apply to `uses:` steps, so the
+#    pnpm cache path carries the services/backend-core/ prefix explicitly.
+name: backend-core
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per-workflow prefix so the product workflows never cancel each other on one ref; the
+  # push-SHA suffix stops consecutive pushes to main from cancelling each other.
+  group: backend-core-${{ github.ref }}${{ github.event_name == 'push' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: services/backend-core
+
+jobs:
+  bc-fast:
+    name: bc/fast
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack and pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.0 --activate
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: services/backend-core/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build all workspaces
+        run: pnpm -r run build
+
+      # MUST run after the build: `lint` is a --noEmit typecheck, and each workspace resolves
+      # its siblings through their published `types` entrypoints under dist/.
+      - name: Static checks
+        run: pnpm lint
+
+      - name: ESLint
+        run: pnpm lint:eslint
+
+      - name: Typecheck tests (api + worker)
+        run: pnpm typecheck
+
+      - name: ESLint rule smoke test
+        run: node --test tools/eslint-rules/__tests__/no-unscoped-tenant-query.spec.js
+
+      - name: oasdiff consumer-impact spec
+        run: node --test tools/oasdiff/__tests__/consumer-impact.spec.mjs
+
+      # The Testcontainers-backed outbox suites are excluded by default in
+      # apps/worker/jest.config.cjs; they run in bc/db-integration with
+      # WORKER_INCLUDE_DB_TESTS=1.
+      - name: Test @data-pulse-2/worker (Docker-free suites)
+        run: pnpm --filter @data-pulse-2/worker test
+
+      - name: Test @data-pulse-2/shared
+        run: pnpm --filter @data-pulse-2/shared test
+
+      - name: Test @data-pulse-2/auth
+        run: pnpm --filter @data-pulse-2/auth test
+
+  bc-db-integration:
+    name: bc/db-integration
+    runs-on: ubuntu-latest
+    # 40 minutes, as in the product workflow: the full api suite runs about 16.5 minutes with
+    # coverage on a 2-core host, plus the cold-runner build and image pull.
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack and pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.0 --activate
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: services/backend-core/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build workspaces required by db/api/worker tests
+        run: >-
+          pnpm
+          --filter @data-pulse-2/shared
+          --filter @data-pulse-2/auth
+          --filter @data-pulse-2/db
+          --filter @data-pulse-2/worker
+          run build
+
+      - name: Pre-pull postgres:16-alpine
+        run: docker pull postgres:16-alpine
+
+      - name: Test @data-pulse-2/db (migrations + Testcontainers)
+        run: pnpm --filter @data-pulse-2/db test
+
+      # WORKER_INCLUDE_DB_TESTS=1 lifts the default exclusion of the three Testcontainers-backed
+      # outbox specs that bc/fast skips for lack of Docker. This re-runs the full worker suite;
+      # the unit-tier overlap with bc/fast is intentional, as in the product workflow.
+      - name: Test @data-pulse-2/worker (Testcontainers outbox suites)
+        env:
+          WORKER_INCLUDE_DB_TESTS: "1"
+        run: pnpm --filter @data-pulse-2/worker test
+
+      # Coverage is collected and the Jest thresholds in apps/api/jest.config.cjs gate this job.
+      # --forceExit: the api suite has a pre-existing open-handle leak (the product workflow
+      # documents it); without it Jest hangs after a green run until the job times out.
+      - name: Test @data-pulse-2/api (RLS + audit + auth suites)
+        run: pnpm --filter @data-pulse-2/api test -- --coverage --forceExit
