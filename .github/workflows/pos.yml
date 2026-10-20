@@ -308,7 +308,10 @@ jobs:
       - name: Prettier check (changed md/json)
         shell: bash
         run: |
-          mapfile -t files < <(git diff --name-only --diff-filter=d HEAD^1 HEAD -- . | sed 's#^apps/pos/##' | grep -E '\.(md|json)$' || true)
+          # The diff runs on its own line so a git failure (for example a missing HEAD^1)
+          # fails the job instead of being swallowed by the filter pipeline below.
+          diff_out="$(git diff --name-only --diff-filter=d HEAD^1 HEAD -- .)"
+          mapfile -t files < <(printf '%s\n' "$diff_out" | sed 's#^apps/pos/##' | grep -E '\.(md|json)$' || true)
           if [ "${#files[@]}" -gt 0 ]; then
             echo "Prettier-checking:"
             printf '  %s\n' "${files[@]}"
