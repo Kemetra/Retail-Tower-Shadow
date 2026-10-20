@@ -4,7 +4,8 @@
 # apps/pos/. Job `name:` values are the graph keys, so each is a literal with no
 # expression and there is no matrix (the three shards are three literal jobs). The
 # workflow `name:` must stay `pos` (matched by the staged gate). PR-reachable: read-only
-# token, no credentials, no environment.
+# token, no stored credentials, no environment. The only use of the job token is the
+# "Fetch main tip" step in the three shard jobs (see the comment there).
 #
 # Differences from the product workflow, all forced by the project graph:
 #  - the graph is the only selector, so the `changes` job, the `ci` aggregate and every
@@ -96,14 +97,16 @@ jobs:
       # works anonymously there; this repo is private and checkout does not persist
       # credentials, so fetch the main tip here, right after checkout and before any PR
       # code runs (npm ci included), with the read-only token passed to this one command
-      # only (never written to .git/config).
+      # only (never written to .git/config). The refspec is forced (+) because on a push to
+      # main, and on a re-run of an old run, checkout has already created origin/main at the
+      # pushed SHA and a depth-1 fetch of a newer tip is otherwise rejected as non-fast-forward.
       - name: Fetch main tip for the source-scope guard
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           echo "::add-mask::$auth"
-          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags --no-recurse-submodules --depth=1 origin main:refs/remotes/origin/main
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags --no-recurse-submodules --depth=1 origin +main:refs/remotes/origin/main
 
       - name: Setup Node 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -150,7 +153,7 @@ jobs:
         run: |
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           echo "::add-mask::$auth"
-          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags --no-recurse-submodules --depth=1 origin main:refs/remotes/origin/main
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags --no-recurse-submodules --depth=1 origin +main:refs/remotes/origin/main
 
       - name: Setup Node 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -195,7 +198,7 @@ jobs:
         run: |
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           echo "::add-mask::$auth"
-          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags --no-recurse-submodules --depth=1 origin main:refs/remotes/origin/main
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags --no-recurse-submodules --depth=1 origin +main:refs/remotes/origin/main
 
       - name: Setup Node 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
