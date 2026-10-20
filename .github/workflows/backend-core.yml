@@ -23,6 +23,15 @@
 #    collected and the Jest thresholds in apps/api/jest.config.cjs still gate the job.
 #  - run directory: `defaults.run.working-directory` does not apply to `uses:` steps, so the
 #    pnpm cache path carries the services/backend-core/ prefix explicitly.
+#  - hardening, not parity: actions are pinned to SHAs (the product used floating @v4),
+#    checkout does not persist credentials, and pull_request is limited to branches: [main]
+#    (required by the staged gate).
+#
+# Known, not fixed here (product test, upstream first): the api spec
+# apps/api/test/auth-contract-cleanup/auth-contract-cleanup.contract.spec.ts runs
+# `git status --porcelain`, whose paths are repo-root-relative here (services/backend-core/...).
+# Its apps/api/src, openapi and connector fences can therefore never match, and on a clean CI
+# checkout it sees nothing at all, so those fences are vacuous in this repository.
 name: backend-core
 
 on:
