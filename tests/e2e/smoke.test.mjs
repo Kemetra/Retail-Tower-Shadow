@@ -96,7 +96,7 @@ describe("e2e/smoke: Backend-Core POS sale wire", () => {
   });
 
   test("replaying the same key and body returns the same sale, no second effect", async () => {
-    const res = await call("POST", SALES, { body, key });
+    const res = await call("POST", SALES, { body: saleBody(`pos-pulse:${randomUUID()}`), key: `e2e-smoke-broken-${randomUUID()}` }); // RT-851 red-path: second sale on replay
     assert.ok([200, 201].includes(res.status), res.text);
     assert.equal(res.headers.get("idempotent-replayed"), "true");
     assert.equal(res.json.saleRef, sale.saleRef);
