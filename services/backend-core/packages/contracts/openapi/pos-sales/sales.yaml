@@ -2966,7 +2966,6 @@ components:
       type: object
       additionalProperties: false
       required:
-        - saleRef
         - storeId
         - currencyCode
         - posTotal
@@ -2985,10 +2984,6 @@ components:
         authenticated scope), no `payload_hash`, no `created_by`, and no
         device. Tender facts ride `tenders` (RT-10 D1) only.
       properties:
-        saleRef:
-          type: string
-          format: uuid
-          description: Stable server-issued reference (= `sales.id`).
         storeId:
           type: string
           format: uuid
