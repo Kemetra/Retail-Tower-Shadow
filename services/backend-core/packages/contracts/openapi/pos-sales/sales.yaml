@@ -2985,6 +2985,9 @@ components:
         authenticated scope), no `payload_hash`, no `created_by`, and no
         device. Tender facts ride `tenders` (RT-10 D1) only.
       properties:
+        probeNote:
+          type: string
+          description: RT-868 additive probe, never merged.
         saleRef:
           type: string
           format: uuid
