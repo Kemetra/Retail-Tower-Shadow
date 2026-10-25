@@ -46,3 +46,4 @@ The README uses GitHub-renderable SVG and Mermaid:
 - Do not imply this repository owns the SaaS backend or dashboard.
 - Preserve the secure Electron process boundary in any architecture docs.
 - Treat the hardware matrix and constitution as higher authority than marketing language.
+<!-- RT-867 probe: docs-only change, do not merge -->
