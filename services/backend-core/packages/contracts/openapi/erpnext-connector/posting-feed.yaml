@@ -1265,7 +1265,7 @@ components:
       properties:
         category:
           type: string
-          enum: [validation, closed_period, unmapped_item, unmapped_account, other]
+          enum: [validation, closed_period, unmapped_item, unmapped_account, unmapped_tax, other]
         message:
           type: string
           minLength: 1
