@@ -114,3 +114,4 @@ function toDto(row: AuditEventRecord): AuditEventDto {
     metadata: row.metadata ?? {},
   };
 }
+// RT-867 probe: Backend-Core-only change, do not merge
